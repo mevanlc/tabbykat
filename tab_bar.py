@@ -175,6 +175,7 @@ class Config:
     pad_ideal_width: int = 24
     pad_char: str = ' '
     auto_contrast: int = 0  # 0=off, 50=WCAG AA (4.5:1), 100=(9:1), 234+=pure B/W
+    contrast_bias: float = 1.0  # multiplier on target for dark-on-light; >1 boosts
     log: LogConfig = field(default_factory=LogConfig)
     background: ColorSection = field(default_factory=ColorSection)
     foreground: ColorSection = field(default_factory=ColorSection)
@@ -274,11 +275,17 @@ def _load_config() -> Config:
         auto_contrast = 0
     auto_contrast = max(0, int(auto_contrast))
 
+    contrast_bias = data.get('contrast_bias', 1.0)
+    if not isinstance(contrast_bias, (int, float)):
+        contrast_bias = 1.0
+    contrast_bias = max(0.0, float(contrast_bias))
+
     return Config(
         tab_format=tab_format,
         pad_ideal_width=ideal_width,
         pad_char=pad_char,
         auto_contrast=auto_contrast,
+        contrast_bias=contrast_bias,
         log=_parse_log_config(data.get('log', {})),
         background=_parse_color_section(data.get('background', {})),
         foreground=_parse_color_section(data.get('foreground', {})),
@@ -471,6 +478,9 @@ def _auto_contrast_fg(fg: Color, bg: Color) -> Color:
     if CONFIG.auto_contrast <= 0:
         return fg
     target = CONFIG.auto_contrast * 0.09  # 50→4.5, 100→9.0
+    # Boost target for dark-on-light (fg darker than bg)
+    if CONFIG.contrast_bias != 1.0 and _srgb_luminance(fg) < _srgb_luminance(bg):
+        target *= CONFIG.contrast_bias
     if _contrast_ratio(fg, bg) >= target:
         return fg
 
@@ -984,6 +994,35 @@ def _run_tests() -> None:
     CONFIG = Config(auto_contrast=50)
     bg_sgr = '\x1b[48;2;40;40;40mhello'
     check('sgr adjust: bg untouched', _contrast_adjust_sgr(bg_sgr, dark_bg), bg_sgr)
+
+    # -- Contrast bias ---------------------------------------------------------
+    print('contrast bias...')
+
+    # Dark-on-light with bias=1.5 should push harder than without
+    light_bg_bias = Color(200, 200, 200)
+    dark_fg_bias = Color(120, 120, 120)
+
+    CONFIG = Config(auto_contrast=50, contrast_bias=1.0)
+    adj_no_bias = _auto_contrast_fg(dark_fg_bias, light_bg_bias)
+    cr_no_bias = _contrast_ratio(adj_no_bias, light_bg_bias)
+
+    CONFIG = Config(auto_contrast=50, contrast_bias=1.5)
+    adj_biased = _auto_contrast_fg(dark_fg_bias, light_bg_bias)
+    cr_biased = _contrast_ratio(adj_biased, light_bg_bias)
+
+    check('bias: dark-on-light boosted', cr_biased > cr_no_bias, True)
+
+    # Light-on-dark should NOT be affected by bias
+    dark_bg_bias = Color(30, 30, 30)
+    light_fg_bias = Color(120, 120, 120)
+
+    CONFIG = Config(auto_contrast=50, contrast_bias=1.0)
+    adj_no_bias_lod = _auto_contrast_fg(light_fg_bias, dark_bg_bias)
+
+    CONFIG = Config(auto_contrast=50, contrast_bias=1.5)
+    adj_biased_lod = _auto_contrast_fg(light_fg_bias, dark_bg_bias)
+
+    check('bias: light-on-dark unchanged', adj_no_bias_lod, adj_biased_lod)
 
     CONFIG = Config()
 

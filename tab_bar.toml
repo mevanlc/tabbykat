@@ -1,7 +1,12 @@
 # Adjust all fg colors toward white/black until contrast ratio is met.
 # 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 234+=pure B/W.
 # Applies to both section-derived and explicit {fmt.fg.*} colors.
-auto_contrast=900
+auto_contrast=150
+
+# Boost contrast target for dark-on-light (dark text on light bg).
+# Compensates for subpixel rendering and perceptual asymmetry.
+# 1.0=no bias, 1.3=30% higher target for dark-on-light, etc.
+contrast_bias=3
 
 [tab]
 # 'format' uses Python's str.format() mini-language.
@@ -49,11 +54,11 @@ char=" "
 [background]
 type="gradient"    # "gradient" or "solid"
 active_color="white"    # e.g. "#1a1a2e", "gray30", or "" for kitty default
-inactive_color="black"  # e.g. "#0a0a0a", or "" for kitty default
-ramp_min=4         # gradient spans at least this many steps; 0 = no minimum
-ramp_max=8         # gradient spans at most this many steps; 0 = no limit
-curve="linear"     # "linear" or "pow"
-exponent=0.5       # only used when curve="pow"
+inactive_color="#222222"  # e.g. "#0a0a0a", or "" for kitty default
+ramp_min=3         # gradient spans at least this many steps; 0 = no minimum
+ramp_max=9         # gradient spans at most this many steps; 0 = no limit
+curve="pow"     # "linear" or "pow"
+exponent=0.6       # only used when curve="pow"
 
 [foreground]
 type="solid"       # "gradient" or "solid"
