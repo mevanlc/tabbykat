@@ -148,12 +148,33 @@ class ColorSection:
     exponent: float = 1.0
 
 
+class LogLevel(Enum):
+    OFF = 'off'
+    ERROR = 'error'
+    WARN = 'warn'
+    INFO = 'info'
+    DEBUG = 'debug'
+
+
+_LOG_RANK = {
+    LogLevel.OFF: 0, LogLevel.ERROR: 1, LogLevel.WARN: 2,
+    LogLevel.INFO: 3, LogLevel.DEBUG: 4,
+}
+
+
+@dataclass(frozen=True)
+class LogConfig:
+    file: str = ''
+    level: LogLevel = LogLevel.OFF
+
+
 @dataclass(frozen=True)
 class Config:
     tab_format: str = '{t}'
     pad_ideal_width: int = 24
     pad_char: str = ' '
     auto_contrast: int = 0  # 0=off, 50=WCAG AA (4.5:1), 100=(9:1), 234+=pure B/W
+    log: LogConfig = field(default_factory=LogConfig)
     background: ColorSection = field(default_factory=ColorSection)
     foreground: ColorSection = field(default_factory=ColorSection)
 
@@ -197,6 +218,23 @@ def _parse_color_section(data: dict) -> ColorSection:
     )
 
 
+def _parse_log_config(data: dict) -> LogConfig:
+    raw_file = data.get('file', '')
+    if not isinstance(raw_file, str):
+        raw_file = ''
+    raw_file = os.path.expanduser(raw_file.strip())
+
+    raw_level = data.get('level', 'off')
+    if not isinstance(raw_level, str):
+        raw_level = 'off'
+    try:
+        level = LogLevel(raw_level.strip().lower())
+    except ValueError:
+        level = LogLevel.OFF
+
+    return LogConfig(file=raw_file, level=level)
+
+
 def _load_config() -> Config:
     try:
         with _config_path.open('rb') as fh:
@@ -234,12 +272,30 @@ def _load_config() -> Config:
         pad_ideal_width=ideal_width,
         pad_char=pad_char,
         auto_contrast=auto_contrast,
+        log=_parse_log_config(data.get('log', {})),
         background=_parse_color_section(data.get('background', {})),
         foreground=_parse_color_section(data.get('foreground', {})),
     )
 
 
 CONFIG = _load_config()
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def _log(level: LogLevel, msg: str) -> None:
+    if not CONFIG.log.file or CONFIG.log.level == LogLevel.OFF:
+        return
+    if _LOG_RANK[level] > _LOG_RANK[CONFIG.log.level]:
+        return
+    try:
+        with open(CONFIG.log.file, 'a') as f:
+            f.write(f'[{level.value}] {msg}\n')
+    except OSError:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Tokenizer
