@@ -365,6 +365,9 @@ def _contrast_adjust_sgr(expanded: str, bg: Color) -> str:
     def _replace(m: re.Match) -> str:
         fg = Color(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         adj = _auto_contrast_fg(fg, bg)
+        _log(LogLevel.DEBUG,
+             f'  sgr_adjust: ({fg.red},{fg.green},{fg.blue})->({adj.red},{adj.green},{adj.blue})'
+             f' on bg=({bg.red},{bg.green},{bg.blue}) cr={_contrast_ratio(adj, bg):.2f}')
         # Preserve the original separator style (colon or semicolon)
         sep = m.group(0)[4]  # char after '\x1b[38'
         return f'\x1b[38{sep}2{sep}{adj.red}{sep}{adj.green}{sep}{adj.blue}m'
@@ -630,8 +633,13 @@ def draw_tab(
     default_bg = _c(draw_data.default_bg)
 
     bg_color = _tab_bg(draw_data, tab, dist, total_on_side)
-    fg_color = _auto_contrast_fg(
-        _tab_fg(draw_data, tab, dist, total_on_side), bg_color)
+    raw_fg = _tab_fg(draw_data, tab, dist, total_on_side)
+    fg_color = _auto_contrast_fg(raw_fg, bg_color)
+    _log(LogLevel.DEBUG,
+         f'tab={index} dist={dist} bg=({bg_color.red},{bg_color.green},{bg_color.blue})'
+         f' raw_fg=({raw_fg.red},{raw_fg.green},{raw_fg.blue})'
+         f' adj_fg=({fg_color.red},{fg_color.green},{fg_color.blue})'
+         f' cr={_contrast_ratio(fg_color, bg_color):.2f}')
     tab_bg = _c(bg_color)
     tab_fg = _c(fg_color)
 
