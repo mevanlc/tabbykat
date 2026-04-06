@@ -583,14 +583,16 @@ def draw_tab(
     if screen.cursor.x == 0:
         screen.draw(' ')
 
-    # Get tokens and pad budget for this tab
+    # Re-prepare tokens with auto-contrasted fg so {fmt.fg.tab} resolves
+    # to the contrasted color (layout-cached tokens have the original fg baked in)
+    fg_int = color_as_int(fg_color)
+    tab_with_contrast = tab._replace(
+        active_fg=fg_int if tab.is_active else tab.active_fg,
+        inactive_fg=fg_int if not tab.is_active else tab.inactive_fg,
+    )
+    _, tokens = _prepare_title(tab_with_contrast, index, draw_data)
+
     tab_idx = index - 1
-    all_tokens = _tab_tokens.get(ow, [])
-    if tab_idx < len(all_tokens):
-        tokens = all_tokens[tab_idx]
-    else:
-        # Fallback: re-prepare
-        _, tokens = _prepare_title(tab, index, draw_data)
 
     budgets = _pad_budgets.get(ow, [])
     total_pad = budgets[tab_idx] if tab_idx < len(budgets) else 0
