@@ -1,5 +1,5 @@
 # Adjust all fg colors toward white/black until contrast ratio is met.
-# 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 200=max (18:1).
+# 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 234+=pure B/W.
 # Applies to both section-derived and explicit {fmt.fg.*} colors.
 auto_contrast=100
 
