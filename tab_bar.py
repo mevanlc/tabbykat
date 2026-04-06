@@ -478,12 +478,13 @@ def _auto_contrast_fg(fg: Color, bg: Color) -> Color:
     if CONFIG.auto_contrast <= 0:
         return fg
     target = CONFIG.auto_contrast * 0.09  # 50→4.5, 100→9.0
-    # Boost target for dark-on-light: based on which pole we'd blend toward
-    # (i.e., what the result will look like, not the input fg)
+    # Bias: boost dark-on-light (pole=black → *bias), dampen light-on-dark (pole=white → /bias)
     max_cr, pole = _max_contrast(bg)
-    if CONFIG.contrast_bias != 1.0 and pole.red == 0:
-        # Best pole is black → result will be dark-on-light
-        target *= CONFIG.contrast_bias
+    if CONFIG.contrast_bias != 1.0:
+        if pole.red == 0:
+            target *= CONFIG.contrast_bias
+        else:
+            target /= CONFIG.contrast_bias
     if _contrast_ratio(fg, bg) >= target:
         return fg
 
@@ -659,14 +660,16 @@ def draw_tab(
     fg_color = _auto_contrast_fg(raw_fg, bg_color)
     _, log_pole = _max_contrast(bg_color)
     base_target = CONFIG.auto_contrast * 0.09
-    biased = log_pole.red == 0 and CONFIG.contrast_bias != 1.0
-    eff_target = base_target * CONFIG.contrast_bias if biased else base_target
+    if CONFIG.contrast_bias != 1.0:
+        eff_target = base_target * CONFIG.contrast_bias if log_pole.red == 0 else base_target / CONFIG.contrast_bias
+    else:
+        eff_target = base_target
     _log(LogLevel.DEBUG,
          f'tab={index} dist={dist} bg=({bg_color.red},{bg_color.green},{bg_color.blue})'
          f' raw_fg=({raw_fg.red},{raw_fg.green},{raw_fg.blue})'
          f' adj_fg=({fg_color.red},{fg_color.green},{fg_color.blue})'
          f' cr={_contrast_ratio(fg_color, bg_color):.2f}'
-         f' pole={"B" if log_pole.red == 0 else "W"} biased={biased} target={eff_target:.1f}')
+         f' pole={"B" if log_pole.red == 0 else "W"} bias={"*" if log_pole.red == 0 else "/"}{CONFIG.contrast_bias} target={eff_target:.1f}')
     tab_bg = _c(bg_color)
     tab_fg = _c(fg_color)
 
@@ -1019,17 +1022,19 @@ def _run_tests() -> None:
 
     check('bias: dark-on-light boosted', cr_biased > cr_no_bias, True)
 
-    # Light-on-dark should NOT be affected by bias
+    # Light-on-dark should be dampened (target / bias)
     dark_bg_bias = Color(30, 30, 30)
     light_fg_bias = Color(120, 120, 120)
 
     CONFIG = Config(auto_contrast=50, contrast_bias=1.0)
     adj_no_bias_lod = _auto_contrast_fg(light_fg_bias, dark_bg_bias)
+    cr_no_bias_lod = _contrast_ratio(adj_no_bias_lod, dark_bg_bias)
 
     CONFIG = Config(auto_contrast=50, contrast_bias=1.5)
     adj_biased_lod = _auto_contrast_fg(light_fg_bias, dark_bg_bias)
+    cr_biased_lod = _contrast_ratio(adj_biased_lod, dark_bg_bias)
 
-    check('bias: light-on-dark unchanged', adj_no_bias_lod, adj_biased_lod)
+    check('bias: light-on-dark dampened', cr_biased_lod < cr_no_bias_lod, True)
 
     CONFIG = Config()
 

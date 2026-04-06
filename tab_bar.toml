@@ -1,12 +1,13 @@
 # Adjust all fg colors toward white/black until contrast ratio is met.
 # 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 234+=pure B/W.
 # Applies to both section-derived and explicit {fmt.fg.*} colors.
-auto_contrast=150
+auto_contrast=900
 
-# Boost contrast target for dark-on-light (dark text on light bg).
+# Bias contrast between dark-on-light and light-on-dark.
+# Dark-on-light target is multiplied by this; light-on-dark is divided by it.
 # Compensates for subpixel rendering and perceptual asymmetry.
-# 1.0=no bias, 1.3=30% higher target for dark-on-light, etc.
-contrast_bias=3
+# 1.0=symmetric, 1.5=dark-on-light targets 50% more, light-on-dark 33% less.
+contrast_bias=0.1
 
 [tab]
 # 'format' uses Python's str.format() mini-language.
