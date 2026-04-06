@@ -121,7 +121,7 @@ LEFT_ARROW = '\ue0b2'
 
 _SGR_SPLIT = re.compile(r'(\033\[.*?m)')
 _PAD_SPLIT = re.compile(r'(%P|%%)')
-_FG_24BIT = re.compile(r'\033\[38;2;(\d+);(\d+);(\d+)m')
+_FG_24BIT = re.compile(r'\033\[38[;:]2[;:](\d+)[;:](\d+)[;:](\d+)m')
 
 # ---------------------------------------------------------------------------
 # Config model
@@ -309,7 +309,9 @@ def _contrast_adjust_sgr(expanded: str, bg: Color) -> str:
     def _replace(m: re.Match) -> str:
         fg = Color(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         adj = _auto_contrast_fg(fg, bg)
-        return f'\x1b[38;2;{adj.red};{adj.green};{adj.blue}m'
+        # Preserve the original separator style (colon or semicolon)
+        sep = m.group(0)[4]  # char after '\x1b[38'
+        return f'\x1b[38{sep}2{sep}{adj.red}{sep}{adj.green}{sep}{adj.blue}m'
 
     return _FG_24BIT.sub(_replace, expanded)
 
@@ -880,6 +882,17 @@ def _run_tests() -> None:
         adj = Color(int(r), int(g), int(b))
         check(f'sgr multi: ({r},{g},{b}) meets target',
               _contrast_ratio(adj, dark_bg) >= 4.5, True)
+
+    # Colon-separated (kitty native format)
+    sgr_colon = '\x1b[38:2:40:40:40mhello'
+    sgr_colon_out = _contrast_adjust_sgr(sgr_colon, dark_bg)
+    m = _FG_24BIT.search(sgr_colon_out)
+    check('sgr adjust colon: found SGR', m is not None, True)
+    if m:
+        adj_fg = Color(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        check('sgr adjust colon: meets target', _contrast_ratio(adj_fg, dark_bg) >= 4.5, True)
+    # Verify colon separator preserved
+    check('sgr adjust colon: sep preserved', ':2:' in sgr_colon_out, True)
 
     # With auto_contrast=0, no adjustment
     CONFIG = Config(auto_contrast=0)
