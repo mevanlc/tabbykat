@@ -416,8 +416,21 @@ def _prepare_title(
     ColorFormatter.draw_data = draw_data
     ColorFormatter.tab_data = tab
 
+    # Resolve foreground exe if needed (lazy — only calls get_boss if {exe} is in format)
+    if _STANDALONE:
+        exe = ''
+    elif '{exe' in CONFIG.tab_format:
+        try:
+            from kitty.fast_data_types import get_boss
+            ktab = get_boss().tab_for_id(tab.tab_id)
+            exe = os.path.basename((ktab.get_exe_of_active_window() if ktab else '') or '')
+        except Exception:
+            exe = ''
+    else:
+        exe = ''
+
     try:
-        expanded = CONFIG.tab_format.format(n=index, nu=_superscript(index), t=title, fmt=_fmt)
+        expanded = CONFIG.tab_format.format(n=index, nu=_superscript(index), t=title, exe=exe, fmt=_fmt)
     except Exception:
         log_error(f'tab_bar.toml: bad [tab].format, falling back to title')
         expanded = title

@@ -21,6 +21,7 @@ pole_bias=3.8
 #   {n}              tab number         {n:03d} for zero-padded
 #   {nu}             tab number in superscript (⁰¹²³⁴⁵⁶⁷⁸⁹)
 #   {t}              tab title
+#   {exe}            foreground process name (e.g. "vim", "python3")
 #
 # Kitty color/style placeholders (same as tab_title_template):
 #   {fmt.fg.red}     named foreground   any CSS/X11 color name
@@ -45,7 +46,7 @@ pole_bias=3.8
 #   "%P{t}%P"                                      centered title
 #   "{fmt.fg._444444}{n:03d}){fmt.fg.tab} {t}%P"  dimmed tab number, then title
 #   "%P{fmt.bold}{t}{fmt.nobold}%P"                centered bold title
-format="{fmt.fg._444444}{n})%P{fmt.fg.tab} {t}%P"
+format="{fmt.fg._444444}{nu} %P{fmt.fg.tab} {t}%P"
 
 # padding is reduced dynamically when tabs exceed the OS window width
 [pad]
