@@ -176,6 +176,7 @@ class Config:
     pad_char: str = ' '
     auto_contrast: int = 0  # 0=off, 50=WCAG AA (4.5:1), 100=(9:1), 234+=pure B/W
     contrast_bias: float = 1.0  # multiplier on target for dark-on-light; >1 boosts
+    pole_bias: float = 1.0  # >1 prefers darkening, <1 prefers lightening
     log: LogConfig = field(default_factory=LogConfig)
     background: ColorSection = field(default_factory=ColorSection)
     foreground: ColorSection = field(default_factory=ColorSection)
@@ -280,12 +281,18 @@ def _load_config() -> Config:
         contrast_bias = 1.0
     contrast_bias = max(0.0, float(contrast_bias))
 
+    pole_bias = data.get('pole_bias', 1.0)
+    if not isinstance(pole_bias, (int, float)):
+        pole_bias = 1.0
+    pole_bias = max(0.01, float(pole_bias))
+
     return Config(
         tab_format=tab_format,
         pad_ideal_width=ideal_width,
         pad_char=pad_char,
         auto_contrast=auto_contrast,
         contrast_bias=contrast_bias,
+        pole_bias=pole_bias,
         log=_parse_log_config(data.get('log', {})),
         background=_parse_color_section(data.get('background', {})),
         foreground=_parse_color_section(data.get('foreground', {})),
@@ -455,13 +462,19 @@ def _contrast_ratio(fg: Color, bg: Color) -> float:
 
 
 def _max_contrast(bg: Color) -> tuple[float, Color]:
-    """Return (max_ratio, best_pole) for a given background."""
+    """Return (max_ratio, best_pole) for a given background.
+
+    pole_bias > 1 favors black (darkening), < 1 favors white (lightening).
+    The bias multiplies the black pole's score before comparison, shifting
+    the crossover point. The returned ratio is always the true (unbiased) max.
+    """
     bg_lum = _srgb_luminance(bg)
     white_cr = (1.0 + 0.05) / (bg_lum + 0.05)
     black_cr = (bg_lum + 0.05) / (0.0 + 0.05)
-    if white_cr >= black_cr:
-        return white_cr, Color(255, 255, 255)
-    return black_cr, Color(0, 0, 0)
+    # Bias the comparison, not the returned ratio
+    if black_cr * CONFIG.pole_bias >= white_cr:
+        return black_cr, Color(0, 0, 0)
+    return white_cr, Color(255, 255, 255)
 
 
 def _auto_contrast_fg(fg: Color, bg: Color) -> Color:
