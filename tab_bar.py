@@ -478,14 +478,16 @@ def _auto_contrast_fg(fg: Color, bg: Color) -> Color:
     if CONFIG.auto_contrast <= 0:
         return fg
     target = CONFIG.auto_contrast * 0.09  # 50→4.5, 100→9.0
-    # Boost target for dark-on-light (fg darker than bg)
-    if CONFIG.contrast_bias != 1.0 and _srgb_luminance(fg) < _srgb_luminance(bg):
+    # Boost target for dark-on-light: based on which pole we'd blend toward
+    # (i.e., what the result will look like, not the input fg)
+    max_cr, pole = _max_contrast(bg)
+    if CONFIG.contrast_bias != 1.0 and pole.red == 0:
+        # Best pole is black → result will be dark-on-light
         target *= CONFIG.contrast_bias
     if _contrast_ratio(fg, bg) >= target:
         return fg
 
-    # Check ceiling — if the best pole can't reach the target, just return it
-    max_cr, pole = _max_contrast(bg)
+    # If the best pole can't reach the target, just return it
     if max_cr <= target:
         return pole
 
@@ -655,11 +657,16 @@ def draw_tab(
     bg_color = _tab_bg(draw_data, tab, dist, total_on_side)
     raw_fg = _tab_fg(draw_data, tab, dist, total_on_side)
     fg_color = _auto_contrast_fg(raw_fg, bg_color)
+    _, log_pole = _max_contrast(bg_color)
+    base_target = CONFIG.auto_contrast * 0.09
+    biased = log_pole.red == 0 and CONFIG.contrast_bias != 1.0
+    eff_target = base_target * CONFIG.contrast_bias if biased else base_target
     _log(LogLevel.DEBUG,
          f'tab={index} dist={dist} bg=({bg_color.red},{bg_color.green},{bg_color.blue})'
          f' raw_fg=({raw_fg.red},{raw_fg.green},{raw_fg.blue})'
          f' adj_fg=({fg_color.red},{fg_color.green},{fg_color.blue})'
-         f' cr={_contrast_ratio(fg_color, bg_color):.2f}')
+         f' cr={_contrast_ratio(fg_color, bg_color):.2f}'
+         f' pole={"B" if log_pole.red == 0 else "W"} biased={biased} target={eff_target:.1f}')
     tab_bg = _c(bg_color)
     tab_fg = _c(fg_color)
 
