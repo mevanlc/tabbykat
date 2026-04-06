@@ -50,7 +50,8 @@ char=" "
 type="gradient"    # "gradient" or "solid"
 active_color="white"    # e.g. "#1a1a2e", "gray30", or "" for kitty default
 inactive_color="black"  # e.g. "#0a0a0a", or "" for kitty default
-ramp_length=0      # tabs over which to interpolate; 0 = span to edge
+ramp_min=4         # gradient spans at least this many steps; 0 = no minimum
+ramp_max=8         # gradient spans at most this many steps; 0 = no limit
 curve="linear"     # "linear" or "pow"
 exponent=0.5       # only used when curve="pow"
 
@@ -58,10 +59,11 @@ exponent=0.5       # only used when curve="pow"
 type="solid"       # "gradient" or "solid"
 active_color=""    # e.g. "#ffffff", "white", or "" for kitty default
 inactive_color=""  # e.g. "#888888", or "" for kitty default
-ramp_length=4      # tabs over which to interpolate; 0 = span to edge
+ramp_min=0         # gradient spans at least this many steps; 0 = no minimum
+ramp_max=0         # gradient spans at most this many steps; 0 = no limit
 curve="linear"     # "linear" or "pow"
 exponent=0.5       # only used when curve="pow"
 
 [log]
-file=""            # e.g. "/tmp/tabbykat.log"; empty = logging off
-level="off"        # "off", "error", "warn", "info", "debug"
+file="/tmp/tabbykat.log"            # e.g. "/tmp/tabbykat.log"; empty = logging off
+level="debug"        # "off", "error", "warn", "info", "debug"

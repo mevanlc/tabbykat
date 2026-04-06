@@ -143,7 +143,8 @@ class ColorSection:
     type: ColorType = ColorType.SOLID
     active_color: Color | None = None
     inactive_color: Color | None = None
-    ramp_length: int = 0
+    ramp_min: int = 0   # gradient spans at least this many steps
+    ramp_max: int = 0   # gradient spans at most this many steps; 0 = no limit
     curve: Curve = Curve.LINEAR
     exponent: float = 1.0
 
@@ -198,10 +199,15 @@ def _parse_color_section(data: dict) -> ColorSection:
     except ValueError:
         curve = Curve.LINEAR
 
-    ramp = data.get('ramp_length', 0)
-    if not isinstance(ramp, int):
-        ramp = 0
-    ramp = max(0, ramp)
+    ramp_min = data.get('ramp_min', 0)
+    if not isinstance(ramp_min, int):
+        ramp_min = 0
+    ramp_min = max(0, ramp_min)
+
+    ramp_max = data.get('ramp_max', 0)
+    if not isinstance(ramp_max, int):
+        ramp_max = 0
+    ramp_max = max(0, ramp_max)
 
     exp = data.get('exponent', 1.0)
     if not isinstance(exp, (int, float)):
@@ -212,7 +218,8 @@ def _parse_color_section(data: dict) -> ColorSection:
         type=ctype,
         active_color=_parse_color(data.get('active_color', '')),
         inactive_color=_parse_color(data.get('inactive_color', '')),
-        ramp_length=ramp,
+        ramp_min=ramp_min,
+        ramp_max=ramp_max,
         curve=curve,
         exponent=exp,
     )
@@ -488,11 +495,14 @@ def _gradient_t(dist: int, total_on_side: int, section: ColorSection) -> float:
     """Compute the interpolation parameter for a tab at *dist* from active."""
     if dist == 0:
         return 0.0
-    if section.ramp_length > 0:
-        raw = min(dist, section.ramp_length) / section.ramp_length
-    else:
-        denom = max(total_on_side, 1)
-        raw = min(dist / denom, 1.0)
+    # Effective span: start with actual tabs on this side
+    span = total_on_side
+    if section.ramp_min > 0:
+        span = max(span, section.ramp_min)
+    if section.ramp_max > 0:
+        span = min(span, section.ramp_max)
+    denom = max(span, 1)
+    raw = min(dist / denom, 1.0)
     if section.curve == Curve.POW:
         return math.pow(raw, section.exponent)
     return raw
@@ -829,7 +839,8 @@ def _run_tests() -> None:
             type="gradient"
             active_color="#ff0000"
             inactive_color="#000000"
-            ramp_length=3
+            ramp_min=2
+            ramp_max=5
             curve="pow"
             exponent=2.0
             [foreground]
@@ -853,7 +864,8 @@ def _run_tests() -> None:
     check('bg type', cfg.background.type, ColorType.GRADIENT)
     check('bg active', cfg.background.active_color, Color(255, 0, 0))
     check('bg inactive', cfg.background.inactive_color, Color(0, 0, 0))
-    check('bg ramp', cfg.background.ramp_length, 3)
+    check('bg ramp_min', cfg.background.ramp_min, 2)
+    check('bg ramp_max', cfg.background.ramp_max, 5)
     check('bg curve', cfg.background.curve, Curve.POW)
     check('bg exponent', cfg.background.exponent, 2.0)
     check('fg type', cfg.foreground.type, ColorType.SOLID)
@@ -863,32 +875,38 @@ def _run_tests() -> None:
     # -- Gradient math ------------------------------------------------------
     print('gradient math...')
 
-    sec = ColorSection(
-        type=ColorType.GRADIENT,
-        active_color=Color(100, 100, 100),
-        inactive_color=Color(0, 0, 0),
-        ramp_length=0,
-        curve=Curve.LINEAR,
-    )
-
+    # Both 0: span exactly the actual tabs
+    sec = ColorSection(type=ColorType.GRADIENT, curve=Curve.LINEAR)
     check('gradient t=0 at active', _gradient_t(0, 4, sec), 0.0)
     check('gradient t linear mid', _gradient_t(2, 4, sec), 0.5)
     check('gradient t linear end', _gradient_t(4, 4, sec), 1.0)
 
-    sec_ramp = ColorSection(
-        type=ColorType.GRADIENT,
-        ramp_length=2,
-        curve=Curve.LINEAR,
-    )
-    check('ramp clamp', _gradient_t(5, 10, sec_ramp), 1.0)
-    check('ramp mid', _gradient_t(1, 10, sec_ramp), 0.5)
+    # ramp_max: hard cap at 2 steps, 10 actual tabs
+    sec_max = ColorSection(type=ColorType.GRADIENT, ramp_max=2, curve=Curve.LINEAR)
+    check('ramp_max clamp', _gradient_t(5, 10, sec_max), 1.0)
+    check('ramp_max mid', _gradient_t(1, 10, sec_max), 0.5)
 
-    sec_pow = ColorSection(
-        type=ColorType.GRADIENT,
-        ramp_length=0,
-        curve=Curve.POW,
-        exponent=2.0,
-    )
+    # ramp_min: stretch to 8 steps even though only 3 actual tabs
+    sec_min = ColorSection(type=ColorType.GRADIENT, ramp_min=8, curve=Curve.LINEAR)
+    check('ramp_min stretch', _gradient_t(3, 3, sec_min), 3 / 8)
+    check('ramp_min at edge', _gradient_t(8, 3, sec_min), 1.0)
+    # With fewer than ramp_min tabs, gradient doesn't reach endpoint
+    check('ramp_min partial', _gradient_t(2, 3, sec_min), 0.25)
+
+    # ramp_min + ramp_max: min=3, max=6, actual=1 → span=3
+    sec_both = ColorSection(type=ColorType.GRADIENT, ramp_min=3, ramp_max=6, curve=Curve.LINEAR)
+    check('min+max few tabs', _gradient_t(1, 1, sec_both), 1 / 3)
+    # actual=10 → span=6 (max wins)
+    check('min+max many tabs', _gradient_t(6, 10, sec_both), 1.0)
+    check('min+max mid', _gradient_t(3, 10, sec_both), 0.5)
+
+    # ramp_min > ramp_max: max is hard cap
+    sec_conflict = ColorSection(type=ColorType.GRADIENT, ramp_min=10, ramp_max=2, curve=Curve.LINEAR)
+    check('min>max: max wins', _gradient_t(2, 5, sec_conflict), 1.0)
+    check('min>max: mid', _gradient_t(1, 5, sec_conflict), 0.5)
+
+    # pow curve (both 0 = span actual)
+    sec_pow = ColorSection(type=ColorType.GRADIENT, curve=Curve.POW, exponent=2.0)
     check('pow curve', _gradient_t(1, 2, sec_pow), 0.25)
 
     # -- Lerp ---------------------------------------------------------------
