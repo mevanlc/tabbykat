@@ -1,6 +1,6 @@
-# Adjust section-derived fg toward white/black until contrast ratio is met.
-# 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=overshoot (9:1).
-# Does not affect explicit {fmt.fg.*} colors in the format string.
+# Adjust all fg colors toward white/black until contrast ratio is met.
+# 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 200=max (18:1).
+# Applies to both section-derived and explicit {fmt.fg.*} colors.
 auto_contrast=100
 
 [tab]

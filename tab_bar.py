@@ -153,7 +153,7 @@ class Config:
     tab_format: str = '{t}'
     pad_ideal_width: int = 24
     pad_char: str = ' '
-    auto_contrast: int = 0  # 0=off, 50=WCAG AA (4.5:1), 100=overshoot (9:1)
+    auto_contrast: int = 0  # 0=off, 50=WCAG AA (4.5:1), 100=(9:1), 200=max (18:1)
     background: ColorSection = field(default_factory=ColorSection)
     foreground: ColorSection = field(default_factory=ColorSection)
 
@@ -227,7 +227,7 @@ def _load_config() -> Config:
     auto_contrast = data.get('auto_contrast', 0)
     if not isinstance(auto_contrast, (int, float)):
         auto_contrast = 0
-    auto_contrast = max(0, min(100, int(auto_contrast)))
+    auto_contrast = max(0, min(200, int(auto_contrast)))
 
     return Config(
         tab_format=tab_format,
