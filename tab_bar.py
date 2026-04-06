@@ -358,21 +358,44 @@ def _contrast_ratio(fg: Color, bg: Color) -> float:
     return (l1 + 0.05) / (l2 + 0.05)
 
 
+def _max_contrast(bg: Color) -> tuple[float, Color]:
+    """Return (max_ratio, best_pole) for a given background."""
+    bg_lum = _srgb_luminance(bg)
+    white_cr = (1.0 + 0.05) / (bg_lum + 0.05)
+    black_cr = (bg_lum + 0.05) / (0.0 + 0.05)
+    if white_cr >= black_cr:
+        return white_cr, Color(255, 255, 255)
+    return black_cr, Color(0, 0, 0)
+
+
 def _auto_contrast_fg(fg: Color, bg: Color) -> Color:
-    """Adjust fg toward white or black until the configured contrast target is met."""
+    """Adjust fg toward white or black until the configured contrast target is met.
+
+    Strategy:
+    1. If already at target, return unchanged.
+    2. Compute max achievable contrast for this bg. If target is unreachable,
+       go straight to the best pole (no wasted search).
+    3. Otherwise, binary search for the minimum blend toward the best pole
+       that achieves the target contrast ratio. Searches on the actual ratio
+       (not luminance) to handle 8-bit quantization correctly.
+    """
     if CONFIG.auto_contrast <= 0:
         return fg
     target = CONFIG.auto_contrast * 0.09  # 50→4.5, 100→9.0
     if _contrast_ratio(fg, bg) >= target:
         return fg
-    # Blend toward whichever pole achieves higher contrast with bg
-    white, black = Color(255, 255, 255), Color(0, 0, 0)
-    pole = white if _contrast_ratio(white, bg) >= _contrast_ratio(black, bg) else black
+
+    # Check ceiling — if the best pole can't reach the target, just return it
+    max_cr, pole = _max_contrast(bg)
+    if max_cr <= target:
+        return pole
+
+    # Binary search for the minimum blend factor that meets the target ratio.
+    # Contrast increases monotonically as we blend toward the pole.
     lo, hi = 0.0, 1.0
-    for _ in range(16):  # binary search — 16 iterations ≈ 1/65536 precision
+    for _ in range(20):
         mid = (lo + hi) / 2.0
-        candidate = _lerp_color(fg, pole, mid)
-        if _contrast_ratio(candidate, bg) >= target:
+        if _contrast_ratio(_lerp_color(fg, pole, mid), bg) >= target:
             hi = mid
         else:
             lo = mid
@@ -806,6 +829,27 @@ def _run_tests() -> None:
     same = _contrast_ratio(Color(128, 128, 128), Color(128, 128, 128))
     check('contrast same', round(same, 1), 1.0)
 
+    # -- Max contrast --------------------------------------------------------
+    print('max contrast...')
+
+    max_cr, pole = _max_contrast(black)
+    check('max contrast on black', round(max_cr, 1), 21.0)
+    check('best pole for black bg', pole, white)
+
+    max_cr, pole = _max_contrast(white)
+    check('max contrast on white', round(max_cr, 1), 21.0)
+    check('best pole for white bg', pole, black)
+
+    mid_gray = Color(128, 128, 128)
+    max_cr, pole = _max_contrast(mid_gray)
+    check('mid-gray best pole is black', pole, black)
+    check('mid-gray max cr ~5.3', max_cr > 5.0 and max_cr < 5.5, True)
+
+    # Worst-case gray (~117) has lowest max contrast
+    worst_gray = Color(117, 117, 117)
+    max_cr_worst, _ = _max_contrast(worst_gray)
+    check('worst gray max cr ~4.6', max_cr_worst > 4.5 and max_cr_worst < 4.8, True)
+
     # -- Auto-contrast adjustment -------------------------------------------
     print('auto-contrast...')
 
@@ -831,9 +875,9 @@ def _run_tests() -> None:
     # With auto_contrast=100, target is 9:1
     CONFIG = Config(auto_contrast=100)
     mid_fg = Color(120, 120, 120)
-    mid_bg = Color(40, 40, 40)  # dark enough that white gives >9:1
-    adjusted = _auto_contrast_fg(mid_fg, mid_bg)
-    ratio = _contrast_ratio(adjusted, mid_bg)
+    achievable_bg = Color(40, 40, 40)  # dark enough that white gives >9:1
+    adjusted = _auto_contrast_fg(mid_fg, achievable_bg)
+    ratio = _contrast_ratio(adjusted, achievable_bg)
     check('ac=100 meets 9:1', ratio >= 9.0, True)
 
     # Light bg should push fg toward black
@@ -844,6 +888,62 @@ def _run_tests() -> None:
     check('ac=50 darkened on light bg', adjusted.red < light_fg.red, True)
     ratio = _contrast_ratio(adjusted, light_bg)
     check('ac=50 light bg meets 4.5:1', ratio >= 4.5, True)
+
+    # -- Gray-on-gray scenarios ---------------------------------------------
+    print('gray-on-gray...')
+
+    # Achievable: 4.5:1 on mid-gray (max ~5.3:1) — should find a solution
+    CONFIG = Config(auto_contrast=50)
+    gray_fg = Color(150, 150, 150)
+    adjusted = _auto_contrast_fg(gray_fg, mid_gray)
+    ratio = _contrast_ratio(adjusted, mid_gray)
+    check('gray 4.5:1 met', ratio >= 4.49, True)
+    check('gray 4.5:1 not excessive', ratio < 6.0, True)  # should be close to target
+
+    # Unreachable: 9:1 on mid-gray — should return best pole (black)
+    CONFIG = Config(auto_contrast=100)
+    adjusted = _auto_contrast_fg(gray_fg, mid_gray)
+    check('gray 9:1 unreachable → pole', adjusted, black)
+
+    # Unreachable: 9:1 on worst-case gray (~117) — should return best pole
+    # White barely beats black on this bg (4.61 vs 4.56)
+    adjusted = _auto_contrast_fg(gray_fg, worst_gray)
+    _, expected_pole = _max_contrast(worst_gray)
+    check('worst gray 9:1 → pole', adjusted, expected_pole)
+
+    # Bright fg on mid-gray should go toward black, not white
+    CONFIG = Config(auto_contrast=50)
+    bright_on_gray = Color(200, 200, 200)
+    adjusted = _auto_contrast_fg(bright_on_gray, mid_gray)
+    ratio = _contrast_ratio(adjusted, mid_gray)
+    check('bright-on-gray meets 4.5:1', ratio >= 4.49, True)
+    # Should have darkened, not lightened — black gives better contrast on this bg
+    max_cr_w = _contrast_ratio(white, mid_gray)
+    max_cr_b = _contrast_ratio(black, mid_gray)
+    if max_cr_b > max_cr_w:
+        check('bright-on-gray went dark', adjusted.red < bright_on_gray.red, True)
+
+    # Sweep across gradient: verify all bgs from 0-255 get valid contrast
+    CONFIG = Config(auto_contrast=50)
+    sweep_ok = True
+    sweep_worst_cr = 21.0
+    sweep_worst_bg = 0
+    for v in range(0, 256, 8):
+        bg_test = Color(v, v, v)
+        fg_test = Color(187, 187, 187)  # typical kitty inactive fg
+        adj = _auto_contrast_fg(fg_test, bg_test)
+        cr = _contrast_ratio(adj, bg_test)
+        max_possible, _ = _max_contrast(bg_test)
+        # Should meet target OR be at the max achievable
+        if cr < 4.5 and cr < max_possible - 0.01:
+            sweep_ok = False
+            sweep_worst_cr = cr
+            sweep_worst_bg = v
+        if cr < sweep_worst_cr:
+            sweep_worst_cr = cr
+            sweep_worst_bg = v
+    check('sweep: all bgs at max or target', sweep_ok, True)
+    print(f'  sweep worst: bg=({sweep_worst_bg},{sweep_worst_bg},{sweep_worst_bg}) cr={sweep_worst_cr:.2f}')
 
     # Restore
     CONFIG = Config(auto_contrast=old_ac) if old_ac else Config()
