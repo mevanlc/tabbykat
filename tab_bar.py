@@ -368,6 +368,11 @@ def _tokens_pad_count(tokens: list[_Token]) -> int:
 # ---------------------------------------------------------------------------
 
 _fmt = Formatter()
+_SUPERSCRIPT_DIGITS = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
+
+
+def _superscript(n: int) -> str:
+    return str(n).translate(_SUPERSCRIPT_DIGITS)
 
 
 def _fix_title(title: str) -> str:
@@ -412,7 +417,7 @@ def _prepare_title(
     ColorFormatter.tab_data = tab
 
     try:
-        expanded = CONFIG.tab_format.format(n=index, t=title, fmt=_fmt)
+        expanded = CONFIG.tab_format.format(n=index, nu=_superscript(index), t=title, fmt=_fmt)
     except Exception:
         log_error(f'tab_bar.toml: bad [tab].format, falling back to title')
         expanded = title
