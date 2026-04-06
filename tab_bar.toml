@@ -1,18 +1,18 @@
 # Adjust all fg colors toward white/black until contrast ratio is met.
 # 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 234+=pure B/W.
 # Applies to both section-derived and explicit {fmt.fg.*} colors.
-auto_contrast=90
+auto_contrast=170
 
 # Bias contrast between dark-on-light and light-on-dark.
 # Dark-on-light target is multiplied by this; light-on-dark is divided by it.
 # Compensates for subpixel rendering and perceptual asymmetry.
 # 1.0=symmetric, 1.5=dark-on-light targets 50% more, light-on-dark 33% less.
-contrast_bias=1.2
+contrast_bias=3.14159
 
 # Shift the darken-vs-lighten crossover point.
 # >1 prefers darkening fg (black pole) even on mid-gray backgrounds.
 # <1 prefers lightening fg (white pole). 1.0=natural crossover (~bg 118).
-pole_bias=1.0
+pole_bias=3.8
 
 [tab]
 # 'format' uses Python's str.format() mini-language.
