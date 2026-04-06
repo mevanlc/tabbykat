@@ -121,6 +121,7 @@ LEFT_ARROW = '\ue0b2'
 
 _SGR_SPLIT = re.compile(r'(\033\[.*?m)')
 _PAD_SPLIT = re.compile(r'(%P|%%)')
+_FG_24BIT = re.compile(r'\033\[38;2;(\d+);(\d+);(\d+)m')
 
 # ---------------------------------------------------------------------------
 # Config model
@@ -300,10 +301,27 @@ def _fix_title(title: str) -> str:
     return title
 
 
-def _prepare_title(tab: TabBarData, index: int, draw_data: DrawData) -> tuple[str, list[_Token]]:
+def _contrast_adjust_sgr(expanded: str, bg: Color) -> str:
+    """Auto-contrast all inline 24-bit fg color SGR sequences against bg."""
+    if CONFIG.auto_contrast <= 0:
+        return expanded
+
+    def _replace(m: re.Match) -> str:
+        fg = Color(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        adj = _auto_contrast_fg(fg, bg)
+        return f'\x1b[38;2;{adj.red};{adj.green};{adj.blue}m'
+
+    return _FG_24BIT.sub(_replace, expanded)
+
+
+def _prepare_title(
+    tab: TabBarData, index: int, draw_data: DrawData,
+    bg_for_contrast: Color | None = None,
+) -> tuple[str, list[_Token]]:
     """Expand the format string and tokenize it.
 
-    Returns (display_title_for_tab_replace, tokens).
+    If *bg_for_contrast* is provided, all inline fg colors in the expanded
+    string are auto-contrasted against it.
     """
     title = _fix_title(tab.title)
 
@@ -316,6 +334,9 @@ def _prepare_title(tab: TabBarData, index: int, draw_data: DrawData) -> tuple[st
     except Exception:
         log_error(f'tab_bar.toml: bad [tab].format, falling back to title')
         expanded = title
+
+    if bg_for_contrast is not None:
+        expanded = _contrast_adjust_sgr(expanded, bg_for_contrast)
 
     tokens = _tokenize(expanded)
     return title, tokens
@@ -583,14 +604,16 @@ def draw_tab(
     if screen.cursor.x == 0:
         screen.draw(' ')
 
-    # Re-prepare tokens with auto-contrasted fg so {fmt.fg.tab} resolves
-    # to the contrasted color (layout-cached tokens have the original fg baked in)
+    # Re-prepare tokens in draw pass: inject auto-contrasted fg into TabBarData
+    # so {fmt.fg.tab} resolves correctly, and pass bg so ALL inline fg colors
+    # (including explicit ones like {fmt.fg._444444}) get auto-contrasted too.
     fg_int = color_as_int(fg_color)
     tab_with_contrast = tab._replace(
         active_fg=fg_int if tab.is_active else tab.active_fg,
         inactive_fg=fg_int if not tab.is_active else tab.inactive_fg,
     )
-    _, tokens = _prepare_title(tab_with_contrast, index, draw_data)
+    _, tokens = _prepare_title(tab_with_contrast, index, draw_data,
+                               bg_for_contrast=bg_color)
 
     tab_idx = index - 1
 
@@ -830,6 +853,44 @@ def _run_tests() -> None:
 
     same = _contrast_ratio(Color(128, 128, 128), Color(128, 128, 128))
     check('contrast same', round(same, 1), 1.0)
+
+    # -- SGR contrast adjustment -----------------------------------------------
+    print('sgr contrast adjust...')
+
+    CONFIG = Config(auto_contrast=50)
+    dark_bg = Color(20, 20, 20)
+
+    # A dim fg SGR should get brightened
+    sgr_in = '\x1b[38;2;40;40;40mhello'
+    sgr_out = _contrast_adjust_sgr(sgr_in, dark_bg)
+    # Extract the adjusted RGB from the output
+    m = _FG_24BIT.search(sgr_out)
+    check('sgr adjust: found SGR', m is not None, True)
+    if m:
+        adj_fg = Color(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        check('sgr adjust: meets target', _contrast_ratio(adj_fg, dark_bg) >= 4.5, True)
+        check('sgr adjust: was brightened', adj_fg.red > 40, True)
+
+    # Multiple SGRs in one string
+    sgr_multi = '\x1b[38;2;40;40;40mnum)\x1b[38;2;50;50;50m title'
+    sgr_multi_out = _contrast_adjust_sgr(sgr_multi, dark_bg)
+    matches = _FG_24BIT.findall(sgr_multi_out)
+    check('sgr adjust: both adjusted', len(matches), 2)
+    for r, g, b in matches:
+        adj = Color(int(r), int(g), int(b))
+        check(f'sgr multi: ({r},{g},{b}) meets target',
+              _contrast_ratio(adj, dark_bg) >= 4.5, True)
+
+    # With auto_contrast=0, no adjustment
+    CONFIG = Config(auto_contrast=0)
+    check('sgr adjust: ac=0 passthrough', _contrast_adjust_sgr(sgr_in, dark_bg), sgr_in)
+
+    # Non-fg SGR (background) should be untouched
+    CONFIG = Config(auto_contrast=50)
+    bg_sgr = '\x1b[48;2;40;40;40mhello'
+    check('sgr adjust: bg untouched', _contrast_adjust_sgr(bg_sgr, dark_bg), bg_sgr)
+
+    CONFIG = Config()
 
     # -- Max contrast --------------------------------------------------------
     print('max contrast...')
