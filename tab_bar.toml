@@ -46,7 +46,7 @@ pole_bias=3.8
 #   "%P{t}%P"                                      centered title
 #   "{fmt.fg._444444}{n:03d}){fmt.fg.tab} {t}%P"  dimmed tab number, then title
 #   "%P{fmt.bold}{t}{fmt.nobold}%P"                centered bold title
-format="{fmt.fg._444444}{nu} %P{fmt.fg.tab} {t}%P"
+format="{fmt.fg._444444}{nu}{fmt.fg.tab} {t}%P"
 
 # padding is reduced dynamically when tabs exceed the OS window width
 [pad]
@@ -79,4 +79,4 @@ exponent=0.5       # only used when curve="pow"
 
 [log]
 file="/tmp/tabbykat.log"            # e.g. "/tmp/tabbykat.log"; empty = logging off
-level="debug"        # "off", "error", "warn", "info", "debug"
+level="off"        # "off", "error", "warn", "info", "debug"

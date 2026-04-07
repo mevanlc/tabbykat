@@ -1,0 +1,12 @@
+# Ignore everything by default
+*
+
+# tabbykat core
+!tab_bar.py
+!tab_bar.toml
+!aidocs/
+!aidocs/**
+
+# Never track
+__pycache__/
+*.pyc
