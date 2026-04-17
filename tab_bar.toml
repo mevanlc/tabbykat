@@ -51,7 +51,7 @@ format="{fmt.fg._444444}{nu}{fmt.fg.tab} {t}%P"
 # padding is reduced dynamically when tabs exceed the OS window width
 [pad]
 # pad tabs using char so that they're this wide
-ideal_width=24
+ideal_width=16
 # character to pad with
 char=" "
 
