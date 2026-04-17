@@ -7,6 +7,10 @@ A custom [kitty](https://sw.kovidgoyal.net/kitty/) tab bar renderer with:
 - WCAG-based auto-contrast with perceptual bias controls
 - Driven entirely by a structured `tab_bar.toml` config
 
+![](https://i.imgur.com/j8st8ah.png)
+
+<img src="https://i.imgur.com/jaSmo0G.gif" width="100%">
+
 ## Install
 
 tabbykat is loaded by kitty as a `tab_bar_style custom` module.
