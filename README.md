@@ -5,7 +5,7 @@ A custom [kitty](https://sw.kovidgoyal.net/kitty/) tab bar renderer with:
 - Gradient "spotlight" background centered on the active tab
 - Directional powerline arrows pointing toward the active tab
 - WCAG-based auto-contrast with perceptual bias controls
-- Driven entirely by a structured `tab_bar.toml` config
+- Customizeable via a structured `tab_bar.toml` config
 
 ![](https://i.imgur.com/j8st8ah.png)
 
