@@ -23,7 +23,7 @@ tabbykat is loaded by kitty as a `tab_bar_style custom` module.
    tab_bar_style custom
    ```
 
-3. Reload kitty (`ctrl+shift+F5`) or send `SIGUSR1` to the kitty process.
+3. Reload kitty (`ctrl+shift+F5`) or restart it.
 
 Run the self-contained test suite with:
 
