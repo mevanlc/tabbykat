@@ -138,6 +138,11 @@ class Curve(Enum):
     POW = 'pow'
 
 
+class Interpolation(Enum):
+    RGB = 'rgb'
+    OKLCH = 'oklch'
+
+
 @dataclass(frozen=True)
 class ColorSection:
     type: ColorType = ColorType.SOLID
@@ -147,6 +152,7 @@ class ColorSection:
     ramp_max: int = 0   # gradient spans at most this many steps; 0 = no limit
     curve: Curve = Curve.LINEAR
     exponent: float = 1.0
+    interpolation: Interpolation = Interpolation.RGB
 
 
 class LogLevel(Enum):
@@ -201,6 +207,12 @@ def _parse_color_section(data: dict) -> ColorSection:
     except ValueError:
         curve = Curve.LINEAR
 
+    raw_interp = data.get('interpolation', 'rgb')
+    try:
+        interp = Interpolation(raw_interp)
+    except ValueError:
+        interp = Interpolation.RGB
+
     ramp_min = data.get('ramp_min', 0)
     if not isinstance(ramp_min, int):
         ramp_min = 0
@@ -224,6 +236,7 @@ def _parse_color_section(data: dict) -> ColorSection:
         ramp_max=ramp_max,
         curve=curve,
         exponent=exp,
+        interpolation=interp,
     )
 
 
@@ -462,6 +475,85 @@ def _lerp_color(a: Color, b: Color, t: float) -> Color:
     )
 
 
+# OKLab / OKLCH (Björn Ottosson, 2020). sRGB ↔ linear ↔ OKLab ↔ OKLCH.
+
+def _srgb_decode(v: int) -> float:
+    s = v / 255.0
+    return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+
+
+def _srgb_encode(v: float) -> int:
+    v = max(0.0, min(1.0, v))
+    s = 12.92 * v if v <= 0.0031308 else 1.055 * (v ** (1 / 2.4)) - 0.055
+    return max(0, min(255, round(s * 255)))
+
+
+def _rgb_to_oklab(c: Color) -> tuple[float, float, float]:
+    r = _srgb_decode(c.red)
+    g = _srgb_decode(c.green)
+    b = _srgb_decode(c.blue)
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+    l_ = l ** (1 / 3)
+    m_ = m ** (1 / 3)
+    s_ = s ** (1 / 3)
+    return (
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    )
+
+
+def _oklab_to_rgb(L: float, a: float, b: float) -> Color:
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l = l_ ** 3
+    m = m_ ** 3
+    s = s_ ** 3
+    r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    return Color(_srgb_encode(r), _srgb_encode(g), _srgb_encode(bl))
+
+
+def _rgb_to_oklch(c: Color) -> tuple[float, float, float]:
+    L, a, b = _rgb_to_oklab(c)
+    return L, math.hypot(a, b), math.atan2(b, a)
+
+
+def _oklch_to_rgb(L: float, C: float, H: float) -> Color:
+    return _oklab_to_rgb(L, C * math.cos(H), C * math.sin(H))
+
+
+def _lerp_color_oklch(a: Color, b: Color, t: float) -> Color:
+    """Interpolate in OKLCH with shortest-arc hue."""
+    L1, C1, H1 = _rgb_to_oklch(a)
+    L2, C2, H2 = _rgb_to_oklch(b)
+    L = L1 + (L2 - L1) * t
+    C = C1 + (C2 - C1) * t
+    # If either endpoint is near-neutral, hue is undefined — adopt the other's.
+    if C1 < 1e-4:
+        H = H2
+    elif C2 < 1e-4:
+        H = H1
+    else:
+        diff = H2 - H1
+        if diff > math.pi:
+            diff -= 2 * math.pi
+        elif diff < -math.pi:
+            diff += 2 * math.pi
+        H = H1 + diff * t
+    return _oklch_to_rgb(L, C, H)
+
+
+def _lerp_section(section: ColorSection, a: Color, b: Color, t: float) -> Color:
+    if section.interpolation == Interpolation.OKLCH:
+        return _lerp_color_oklch(a, b, t)
+    return _lerp_color(a, b, t)
+
+
 def _srgb_luminance(c: Color) -> float:
     """Relative luminance per WCAG 2.x (sRGB linearization)."""
     def lin(v: int) -> float:
@@ -567,7 +659,7 @@ def _section_color(
     if section.type == ColorType.SOLID:
         return inactive
     t = _gradient_t(dist, total_on_side, section)
-    return _lerp_color(active, inactive, t)
+    return _lerp_section(section, active, inactive, t)
 
 
 def _tab_bg(dd: DrawData, tab: TabBarData, dist: int, total_on_side: int) -> Color:
@@ -894,6 +986,7 @@ def _run_tests() -> None:
             ramp_max=5
             curve="pow"
             exponent=2.0
+            interpolation="oklch"
             [foreground]
             type="solid"
             active_color="#ffffff"
@@ -919,6 +1012,8 @@ def _run_tests() -> None:
     check('bg ramp_max', cfg.background.ramp_max, 5)
     check('bg curve', cfg.background.curve, Curve.POW)
     check('bg exponent', cfg.background.exponent, 2.0)
+    check('bg interpolation', cfg.background.interpolation, Interpolation.OKLCH)
+    check('fg interpolation default rgb', cfg.foreground.interpolation, Interpolation.RGB)
     check('fg type', cfg.foreground.type, ColorType.SOLID)
     check('fg active', cfg.foreground.active_color, Color(255, 255, 255))
     check('fg inactive', cfg.foreground.inactive_color, Color(136, 136, 136))
@@ -967,6 +1062,67 @@ def _run_tests() -> None:
     check('lerp black-white 1', _lerp_color(Color(0, 0, 0), Color(255, 255, 255), 1.0), Color(255, 255, 255))
     mid = _lerp_color(Color(0, 0, 0), Color(200, 100, 50), 0.5)
     check('lerp midpoint', mid, Color(100, 50, 25))
+
+    # -- OKLCH interpolation ------------------------------------------------
+    print('oklch...')
+
+    # Round-trip: rgb → oklab → rgb should be near-identity
+    for c in (Color(255, 0, 0), Color(0, 255, 0), Color(0, 0, 255),
+              Color(123, 200, 50), Color(0, 0, 0), Color(255, 255, 255)):
+        L, a, b = _rgb_to_oklab(c)
+        rt = _oklab_to_rgb(L, a, b)
+        check(f'oklab roundtrip {c}',
+              abs(rt.red - c.red) <= 1 and abs(rt.green - c.green) <= 1 and abs(rt.blue - c.blue) <= 1,
+              True)
+
+    # Endpoints unchanged at t=0 and t=1
+    green = Color(0, 200, 0)
+    blue = Color(0, 0, 200)
+    rt0 = _lerp_color_oklch(green, blue, 0.0)
+    rt1 = _lerp_color_oklch(green, blue, 1.0)
+    check('oklch t=0 is start',
+          abs(rt0.red - green.red) <= 1 and abs(rt0.green - green.green) <= 1 and abs(rt0.blue - green.blue) <= 1,
+          True)
+    check('oklch t=1 is end',
+          abs(rt1.red - blue.red) <= 1 and abs(rt1.green - blue.green) <= 1 and abs(rt1.blue - blue.blue) <= 1,
+          True)
+
+    # OKLCH midpoint between green and blue stays chromatic (passes through cyan-ish),
+    # whereas RGB midpoint of (0,200,0)→(0,0,200) is (0,100,100) — much darker/duller.
+    mid_rgb = _lerp_color(green, blue, 0.5)
+    mid_oklch = _lerp_color_oklch(green, blue, 0.5)
+    L_rgb, C_rgb, _ = _rgb_to_oklch(mid_rgb)
+    L_oklch, C_oklch, _ = _rgb_to_oklch(mid_oklch)
+    check('oklch midpoint more chromatic than rgb', C_oklch > C_rgb, True)
+    # And OKLCH lightness lies between the endpoints (monotonic ramp).
+    L_green, _, _ = _rgb_to_oklch(green)
+    L_blue, _, _ = _rgb_to_oklch(blue)
+    lo, hi = sorted((L_green, L_blue))
+    check('oklch midpoint L between endpoints', lo - 1e-3 <= L_oklch <= hi + 1e-3, True)
+
+    # Hue takes the shortest arc: green (~142°) → blue (~264°) goes through cyan,
+    # not yellow→red→magenta. Check the midpoint hue lies in (142°, 264°).
+    _, _, H_mid = _rgb_to_oklch(mid_oklch)
+    H_mid_deg = math.degrees(H_mid) % 360
+    check('oklch hue takes shortest arc', 140 < H_mid_deg < 270, True)
+
+    # Near-neutral endpoint: hue should be borrowed from the chromatic side.
+    gray = Color(128, 128, 128)
+    red = Color(220, 30, 30)
+    out = _lerp_color_oklch(gray, red, 0.5)
+    # Should be a desaturated red, not e.g. green or blue
+    check('oklch neutral→red midpoint is reddish', out.red > out.green and out.red > out.blue, True)
+
+    # Section dispatch: OKLCH section uses oklch lerp
+    sec_rgb = ColorSection(type=ColorType.GRADIENT, interpolation=Interpolation.RGB,
+                           active_color=green, inactive_color=blue)
+    sec_oklch = ColorSection(type=ColorType.GRADIENT, interpolation=Interpolation.OKLCH,
+                             active_color=green, inactive_color=blue)
+    out_rgb = _lerp_section(sec_rgb, green, blue, 0.5)
+    out_oklch = _lerp_section(sec_oklch, green, blue, 0.5)
+    check('section rgb matches _lerp_color', out_rgb, _lerp_color(green, blue, 0.5))
+    check('section oklch matches _lerp_color_oklch', out_oklch, _lerp_color_oklch(green, blue, 0.5))
+    check('section rgb ≠ section oklch', out_rgb != out_oklch, True)
 
     # -- Chrome width -------------------------------------------------------
     print('chrome...')

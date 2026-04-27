@@ -1,7 +1,8 @@
 # Adjust all fg colors toward white/black until contrast ratio is met.
 # 0=off, 50=WCAG AA (4.5:1), ~78=WCAG AAA (7:1), 100=(9:1), 234+=pure B/W.
 # Applies to both section-derived and explicit {fmt.fg.*} colors.
-auto_contrast=170
+# auto_contrast=170
+auto_contrast=50
 
 # Bias contrast between dark-on-light and light-on-dark.
 # Dark-on-light target is multiplied by this; light-on-dark is divided by it.
@@ -46,7 +47,8 @@ pole_bias=3.8
 #   "%P{t}%P"                                      centered title
 #   "{fmt.fg._444444}{n:03d}){fmt.fg.tab} {t}%P"  dimmed tab number, then title
 #   "%P{fmt.bold}{t}{fmt.nobold}%P"                centered bold title
-format="{fmt.fg._444444}{nu}{fmt.fg.tab} {t}%P"
+# format="{fmt.fg._444444}{nu}{fmt.fg.tab} {t}%P"
+format="{nu} {t}%P"
 
 # padding is reduced dynamically when tabs exceed the OS window width
 [pad]
@@ -61,12 +63,37 @@ char=" "
 
 [background]
 type="gradient"    # "gradient" or "solid"
-active_color="white"    # e.g. "#1a1a2e", "gray30", or "" for kitty default
-inactive_color="#222222"  # e.g. "#0a0a0a", or "" for kitty default
 ramp_min=4         # gradient spans at least this many steps; 0 = no minimum
 ramp_max=9         # gradient spans at most this many steps; 0 = no limit
 curve="pow"     # "linear" or "pow"
-exponent=0.5       # only used when curve="pow"
+exponent=0.6       # only used when curve="pow"
+active_color="#DDDDDD"    # e.g. "#1a1a2e", "gray30", or "" for kitty default
+inactive_color="#222222"  # e.g. "#0a0a0a", or "" for kitty default
+#
+# "rgb" interpolates linearly in sRGB (matches old behavior).
+# "oklch" interpolates in OKLCH (perceptual lightness/chroma/hue), giving
+# smooth, monotonic lightness ramps and vivid hue transitions — useful when
+# active_color and inactive_color have different hues (e.g. green→blue).
+# 
+# interpolation="rgb"
+
+## Green->Blue
+# active_color="#22cc55"
+# inactive_color="#2244cc"
+
+## Bright Late
+# active_color="#fc9a3f"
+# inactive_color="#613710"
+
+## Late Late
+# active_color="#B8782C"
+# inactive_color="2E261F"
+
+# B8782C
+# 44382E
+
+
+interpolation="oklch"
 
 [foreground]
 type="solid"       # "gradient" or "solid"
@@ -76,6 +103,7 @@ ramp_min=0         # gradient spans at least this many steps; 0 = no minimum
 ramp_max=0         # gradient spans at most this many steps; 0 = no limit
 curve="linear"     # "linear" or "pow"
 exponent=0.5       # only used when curve="pow"
+interpolation="rgb"  # "rgb" or "oklch" — see [background] for details
 
 [log]
 file="/tmp/tabbykat.log"            # e.g. "/tmp/tabbykat.log"; empty = logging off
