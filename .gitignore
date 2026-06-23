@@ -4,6 +4,7 @@
 # tabbykat core
 !tab_bar.py
 !tab_bar.toml
+!link-kitty-config.sh
 !aidocs/
 !aidocs/**
 
