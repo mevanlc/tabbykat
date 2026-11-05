@@ -13,6 +13,7 @@ import tomllib
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from string import Formatter as StringFormatter
 from typing import NamedTuple
 
 _STANDALONE = 'kitty' not in sys.modules and __name__ == '__main__'
@@ -87,6 +88,9 @@ if _STANDALONE:
     class TabBarData(NamedTuple):  # type: ignore[no-redef]
         title: str = ''
         is_active: bool = False
+        tab_id: int = 0
+        active_fg: int = 0
+        inactive_fg: int = 0
 
     class ExtraData:  # type: ignore[no-redef]
         prev_tab: object = None
@@ -176,6 +180,14 @@ class LogConfig:
 
 
 @dataclass(frozen=True)
+class Transform:
+    pattern: re.Pattern[str]
+    replacement: str = ''
+    count: int = 1
+    component: str = '*'
+
+
+@dataclass(frozen=True)
 class Config:
     tab_format: str = '{t}'
     pad_ideal_width: int = 24
@@ -186,6 +198,7 @@ class Config:
     log: LogConfig = field(default_factory=LogConfig)
     background: ColorSection = field(default_factory=ColorSection)
     foreground: ColorSection = field(default_factory=ColorSection)
+    transforms: tuple[Transform, ...] = ()
 
 
 def _parse_color(value: object) -> Color | None:
@@ -257,6 +270,55 @@ def _parse_log_config(data: dict) -> LogConfig:
     return LogConfig(file=raw_file, level=level)
 
 
+_TRANSFORM_FLAGS = {
+    'a': re.ASCII, 'i': re.IGNORECASE, 'm': re.MULTILINE,
+    's': re.DOTALL, 'u': re.UNICODE, 'x': re.VERBOSE,
+}
+_COMPONENTS = frozenset(('n', 'nu', 't', 'exe'))
+
+
+def _parse_transforms(data: object) -> tuple[Transform, ...]:
+    if not isinstance(data, list):
+        log_error('tab_bar.toml: transform must be an array of tables; skipping transforms')
+        return ()
+
+    transforms: list[Transform] = []
+    for index, raw in enumerate(data, 1):
+        try:
+            if not isinstance(raw, dict):
+                raise TypeError('must be a table')
+            search = raw.get('s')
+            replacement = raw.get('r', '')
+            flags_text = raw.get('f', '')
+            component = raw.get('c', '*')
+            for key, value in (('s', search), ('r', replacement),
+                               ('f', flags_text), ('c', component)):
+                if not isinstance(value, str):
+                    raise TypeError(f'{key!r} must be a string')
+            if component != '*' and component not in _COMPONENTS:
+                raise ValueError(f'invalid component {component!r}')
+
+            flags = re.NOFLAG
+            count = 1
+            for flag in flags_text:
+                if flag in _TRANSFORM_FLAGS:
+                    flags |= _TRANSFORM_FLAGS[flag]
+                elif flag in '0123456789g':
+                    count = 0 if flag == 'g' else int(flag)
+                elif flag == 'l':
+                    raise ValueError("'l' (re.L) requires bytes patterns, not Unicode strings")
+                else:
+                    raise ValueError(f'unsupported flag {flag!r}')
+
+            pattern = re.compile(search, flags)
+            # Parse replacement escapes/backreferences even if nothing matches.
+            pattern.sub(replacement, '', count=1)
+            transforms.append(Transform(pattern, replacement, count, component))
+        except (re.error, TypeError, ValueError, IndexError, OverflowError, RecursionError) as exc:
+            log_error(f'tab_bar.toml: transform[{index}]: {exc}; skipping rule')
+    return tuple(transforms)
+
+
 def _load_config() -> Config:
     try:
         with _config_path.open('rb') as fh:
@@ -309,6 +371,7 @@ def _load_config() -> Config:
         log=_parse_log_config(data.get('log', {})),
         background=_parse_color_section(data.get('background', {})),
         foreground=_parse_color_section(data.get('foreground', {})),
+        transforms=_parse_transforms(data.get('transform', [])),
     )
 
 
@@ -384,6 +447,40 @@ _fmt = Formatter()
 _SUPERSCRIPT_DIGITS = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
 
 
+def _apply_transforms(text: str, component: str) -> str:
+    for transform in CONFIG.transforms:
+        if transform.component == component:
+            text = transform.pattern.sub(transform.replacement, text, count=transform.count)
+    return text
+
+
+class _ComponentField(NamedTuple):
+    value: object
+    component: str
+
+
+class _TitleFormatter(StringFormatter):
+    def get_field(self, field_name: str, args: tuple, kwargs: dict) -> tuple[object, str | int]:
+        value, key = super().get_field(field_name, args, kwargs)
+        if key in _COMPONENTS:
+            value = _ComponentField(value, key)
+        return value, key
+
+    def convert_field(self, value: object, conversion: str | None) -> object:
+        if isinstance(value, _ComponentField):
+            return _ComponentField(super().convert_field(value.value, conversion), value.component)
+        return super().convert_field(value, conversion)
+
+    def format_field(self, value: object, format_spec: str) -> str:
+        if isinstance(value, _ComponentField):
+            text = super().format_field(value.value, format_spec)
+            return _apply_transforms(text, value.component)
+        return super().format_field(value, format_spec)
+
+
+_title_formatter = _TitleFormatter()
+
+
 def _superscript(n: int) -> str:
     return str(n).translate(_SUPERSCRIPT_DIGITS)
 
@@ -418,7 +515,7 @@ def _prepare_title(
     tab: TabBarData, index: int, draw_data: DrawData,
     bg_for_contrast: Color | None = None,
 ) -> tuple[str, list[_Token]]:
-    """Expand the format string and tokenize it.
+    """Expand components, transform the assembled string, then tokenize it.
 
     If *bg_for_contrast* is provided, all inline fg colors in the expanded
     string are auto-contrasted against it.
@@ -443,10 +540,17 @@ def _prepare_title(
         exe = ''
 
     try:
-        expanded = CONFIG.tab_format.format(n=index, nu=_superscript(index), t=title, exe=exe, fmt=_fmt)
+        if CONFIG.transforms:
+            expanded = _title_formatter.format(
+                CONFIG.tab_format, n=index, nu=_superscript(index), t=title, exe=exe, fmt=_fmt,
+            )
+        else:
+            expanded = CONFIG.tab_format.format(n=index, nu=_superscript(index), t=title, exe=exe, fmt=_fmt)
     except Exception:
         log_error(f'tab_bar.toml: bad [tab].format, falling back to title')
-        expanded = title
+        expanded = _apply_transforms(title, 't')
+
+    expanded = _apply_transforms(expanded, '*')
 
     if bg_for_contrast is not None:
         expanded = _contrast_adjust_sgr(expanded, bg_for_contrast)
@@ -913,6 +1017,8 @@ def draw_tab(
 def _run_tests() -> None:
     import tempfile
     import textwrap
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
 
     passed = 0
     failed = 0
@@ -991,6 +1097,13 @@ def _run_tests() -> None:
             type="solid"
             active_color="#ffffff"
             inactive_color="#888888"
+            [[transform]]
+            s='old'
+            r='new'
+            c='t'
+            [[transform]]
+            s='new'
+            f='g'
         '''))
         tmp = f.name
 
@@ -1017,6 +1130,213 @@ def _run_tests() -> None:
     check('fg type', cfg.foreground.type, ColorType.SOLID)
     check('fg active', cfg.foreground.active_color, Color(255, 255, 255))
     check('fg inactive', cfg.foreground.inactive_color, Color(136, 136, 136))
+
+    # -- Transforms ---------------------------------------------------------
+    print('transforms...')
+
+    check('config transform order', [t.pattern.pattern for t in cfg.transforms], ['old', 'new'])
+    check('config transform components', [t.component for t in cfg.transforms], ['t', '*'])
+    check('no transforms by default', Config().transforms, ())
+
+    default_rule = _parse_transforms([{'s': 'a'}])[0]
+    empty_rule = _parse_transforms([{'s': 'a', 'r': '', 'f': ''}])[0]
+    check('empty r/f equal defaults', empty_rule, default_rule)
+    check('default replacement', default_rule.replacement, '')
+    check('default count', default_rule.count, 1)
+    check('default component', default_rule.component, '*')
+
+    def substitute(text: str, **rule: str) -> str:
+        transform = _parse_transforms([rule])[0]
+        return transform.pattern.sub(transform.replacement, text, count=transform.count)
+
+    check('omitted replacement deletes first', substitute('aaa', s='a'), 'aa')
+    check('empty flags replace first', substitute('aaa', s='a', r='b', f=''), 'baa')
+    check('no match unchanged', substitute('abc', s='z', r='x'), 'abc')
+    check('empty pattern first', substitute('ab', s='', r='_'), '_ab')
+    check('empty pattern global', substitute('ab', s='', r='_', f='g'), '_a_b_')
+    check('replacement backreferences',
+          substitute('python', s=r'(?P<prefix>py)(thon)', r=r'\g<prefix>-\2'), 'py-thon')
+    for flag in '0123456789g':
+        count = 12 if flag in '0g' else int(flag)
+        check(f'count flag {flag}', substitute('a' * 12, s='a', r='b', f=flag),
+              'b' * count + 'a' * (12 - count))
+    for flags, count in (('g2', 2), ('23', 3), ('2g', 12), ('09', 9), ('90', 12)):
+        check(f'last count wins {flags}', substitute('a' * 12, s='a', r='b', f=flags),
+              'b' * count + 'a' * (12 - count))
+    for flags, search, text, expected in (
+        ('i', 'abc', 'ABC abc', 'X abc'),
+        ('a', r'\w+', 'caf\u00e9', 'X\u00e9'),
+        ('u', r'\w+', 'caf\u00e9', 'X'),
+        ('m', '^a', 'z\na', 'z\nX'),
+        ('s', 'a.b', 'a\nb', 'X'),
+        ('x', 'a b # comment', 'ab', 'X'),
+        ('imsxg', '^ a . b $ # comment', 'A\nB\nA\nB', 'X\nX'),
+        ('ii', 'abc', 'ABC', 'X'),
+    ):
+        check(f'regex flags {flags}', substitute(text, s=search, r='X', f=flags), expected)
+
+    bad_rules = [
+        None, {}, {'s': 42}, {'s': 'a', 'r': 1}, {'s': 'a', 'f': []},
+        {'s': 'a', 'c': ['t']}, {'s': 'a', 'c': ''}, {'s': 'a', 'c': 'other'},
+        {'s': '['}, {'s': '(a)', 'r': r'\2'},
+        {'s': '(?P<a>a)', 'r': r'\g<missing>'}, {'s': 'a', 'r': r'\q'},
+        {'s': 'a', 'f': 'z'}, {'s': 'a', 'f': 'l'}, {'s': 'a', 'f': 'au'},
+        {'s': '(?L)a'}, {'s': 'a{999999999999999999999999999}'},
+    ]
+    with patch(__name__ + '.log_error') as errors:
+        rules = _parse_transforms([{'s': 'a', 'r': 'b'}, *bad_rules, {'s': 'b', 'r': 'c'}])
+        check('invalid rules isolated', [t.replacement for t in rules], ['b', 'c'])
+        check('one diagnostic per bad rule', errors.call_count, len(bad_rules))
+        for index, call in enumerate(errors.call_args_list, 2):
+            check(f'diagnostic index {index}', f'transform[{index}]:' in call.args[0], True)
+        CONFIG = Config(transforms=rules)
+        _prepare_title(TabBarData(title='a'), 1, DrawData())
+        _prepare_title(TabBarData(title='a'), 1, DrawData())
+        check('no per-frame diagnostics', errors.call_count, len(bad_rules))
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_path = Path(tmp_dir) / 'tab_bar.toml'
+        test_path.write_text(textwrap.dedent("""\
+            auto_contrast=17
+            [pad]
+            ideal_width=42
+            [[transform]]
+            s='a'
+            r='b'
+            [[transform]]
+            s='['
+            [[transform]]
+            s='b'
+            r='c'
+        """), encoding='utf-8')
+        with patch(__name__ + '._config_path', test_path), patch(__name__ + '.log_error') as errors:
+            mixed_config = _load_config()
+        check('invalid rule retains config settings',
+              (mixed_config.auto_contrast, mixed_config.pad_ideal_width), (17, 42))
+        check('load retains valid rules', len(mixed_config.transforms), 2)
+        check('load reports invalid rule once', errors.call_count, 1)
+        test_path.write_text("[transform]\ns='a'\n", encoding='utf-8')
+        with patch(__name__ + '._config_path', test_path), patch(__name__ + '.log_error') as errors:
+            check('non-array transform rejected', _load_config().transforms, ())
+        check('non-array transform diagnostic', errors.call_count, 1)
+
+    def prepared(template: str, rules: list, title: str = 'title', index: int = 7,
+                 bg: Color | None = None, **settings: object) -> list[_Token]:
+        global CONFIG
+        CONFIG = Config(tab_format=template, transforms=_parse_transforms(rules), **settings)
+        return _prepare_title(TabBarData(title=title), index, DrawData(), bg)[1]
+
+    def token_text(tokens: list[_Token]) -> str:
+        return ''.join(t.value for t in tokens)
+
+    for template in ('{n}', '{n:03d} {nu} {t} {exe}', '{t!r:>10} {t!a}',
+                     '{{n}} {t[0]} {n!s:>3}', '%P{fmt.bold}{t}{fmt.nobold}%%'):
+        plain = prepared(template, [], title='caf\u00e9')
+        inert = prepared(template, [{'s': '(?!)', 'c': 'n'}], title='caf\u00e9')
+        expected = _tokenize(template.format(n=7, nu=_superscript(7), t='caf\u00e9', exe='', fmt=_fmt))
+        check(f'no transforms {template}', plain, expected)
+        check(f'inert transforms {template}', inert, expected)
+
+    tokens = prepared('{n:03d}/{n:04d} {nu} {t} {exe}', [
+        {'s': '0', 'r': 'X', 'f': 'g', 'c': 'n'},
+        {'s': '\u2077', 'r': '^7', 'c': 'nu'},
+        {'s': 'title', 'r': 'heading', 'c': 't'},
+        {'s': '^$', 'r': 'shell', 'c': 'exe'},
+    ])
+    check('formatted components independently', token_text(tokens), 'XX7/XXX7 ^7 heading shell')
+    tokens = prepared('{n} {nu}', [{'s': '7', 'r': '9', 'c': 'n'}])
+    check('n does not change nu', token_text(tokens), '9 \u2077')
+    tokens = prepared('{t!r:>10} {t!a}', [{'s': "'title'", 'r': 'T', 'c': 't'}])
+    check('transforms after conversion and format spec', token_text(tokens), '   T T')
+    tokens = prepared('{t}|{t}', [{'s': 'x', 'r': 'y', 'c': 't'}], title='xx')
+    check('count per placeholder occurrence', token_text(tokens), 'yx|yx')
+    tokens = prepared('{t} a', [
+        {'s': 'c a', 'r': 'd'},
+        {'s': 'a', 'r': 'b', 'c': 't'},
+        {'s': 'd', 'r': 'done', 'c': '*'},
+        {'s': 'b', 'r': 'c', 'c': 't'},
+    ], title='a')
+    check('component then whole-string declaration order', token_text(tokens), 'done')
+
+    tokens = prepared('\x1b[31m{t}%P%%\x1b[0m', [
+        {'s': r'\x1b\[31m', 'r': '\x1b[32m'},
+        {'s': '%P', 'r': '--'},
+        {'s': '%%', 'r': '!'},
+    ], title='abc')
+    check('whole-string sees styling and markers', token_text(tokens), '\x1b[32mabc--!\x1b[0m')
+    check('width measured after transforms', _tokens_width(tokens), 6)
+    check('padding marker removed before tokenization', _tokens_pad_count(tokens), 0)
+    tokens = prepared('{t}', [{'s': ' ', 'r': '%P'}], title='a b')
+    check('replacement can create padding marker', _tokens_pad_count(tokens), 1)
+    check('new marker not counted as text', _tokens_width(tokens), 2)
+    dark_bg = Color(20, 20, 20)
+    tokens = prepared('\x1b[38;2;40;40;40m{t}', [{'s': '40;40;40', 'r': '50;50;50'}],
+                      title='abc', bg=dark_bg, auto_contrast=50)
+    check('transforms before contrast adjustment', token_text(tokens),
+          _contrast_adjust_sgr('\x1b[38;2;50;50;50mabc', dark_bg))
+
+    with patch(__name__ + '.log_error') as errors:
+        tokens = prepared('{t}{missing}', [
+            {'s': 'a', 'r': 'aa', 'c': 't'}, {'s': '^aa$', 'r': 'fallback'},
+        ], title='a')
+        check('format fallback transforms title exactly once', token_text(tokens), 'fallback')
+        check('format fallback reported', errors.call_count, 1)
+    with patch(__name__ + '._home', '/home/test'), patch('os.path.exists', return_value=True):
+        tokens = prepared('{t}', [{'s': '^~/', 'r': 'home:', 'c': 't'}], title='\u2026/src')
+    check('title normalized before transform', token_text(tokens), 'home:src')
+
+    get_boss = Mock()
+    get_boss.return_value.tab_for_id.return_value.get_exe_of_active_window.return_value = '/usr/bin/vim'
+    with patch(__name__ + '._STANDALONE', False), patch.dict(sys.modules, {
+        'kitty': SimpleNamespace(), 'kitty.fast_data_types': SimpleNamespace(get_boss=get_boss),
+    }):
+        prepared('{t}', [{'s': 'vim', 'r': 'editor', 'c': 'exe'}])
+        check('exe rule alone does not trigger lookup', get_boss.call_count, 0)
+        tokens = prepared('{exe}', [{'s': 'vim', 'r': 'editor', 'c': 'exe'}])
+        check('exe basename transformed', token_text(tokens), 'editor')
+        check('exe resolved only when used', get_boss.call_count, 1)
+
+    # -- Transform layout/draw integration ----------------------------------
+    print('transform layout...')
+
+    class TestScreen:
+        def __init__(self) -> None:
+            self.columns = 80
+            self.cursor = SimpleNamespace(x=0, fg=0, bg=0, bold=False, italic=False)
+            self.drawn: list[str] = []
+
+        def draw(self, text: str) -> None:
+            self.drawn.append(text)
+            self.cursor.x += len(text)
+
+    for ow, title, replacement, expected_width, truncated in (
+        (-1, 'longlonglong', 'ok', 2, False),
+        (-2, 'ok', 'longlonglong', 12, True),
+    ):
+        CONFIG = Config(tab_format='{t}%P', pad_ideal_width=0,
+                        transforms=_parse_transforms([{'s': title, 'r': replacement}]))
+        screen = TestScreen()
+        dd = DrawData(os_window_id=ow)
+        tab = TabBarData(title=title, is_active=True)
+        extra = ExtraData()
+        extra.for_layout = True
+        try:
+            draw_tab(dd, screen, tab, 0, 8, 1, True, extra)
+            check(f'layout uses transformed width {ow}', _ideal_widths[ow], [expected_width + 3])
+            check(f'layout does not draw {ow}', screen.drawn, [])
+            screen.cursor.x = 0
+            extra.for_layout = False
+            with patch(__name__ + '.draw_attributed_string',
+                       side_effect=lambda text, target: target.draw(_SGR_SPLIT.sub('', text))):
+                end = draw_tab(dd, screen, tab, 0, 8, 1, True, extra)
+            check(f'draw uses transformed title {ow}', replacement in screen.drawn, True)
+            check(f'truncation after transforms {ow}', '\u2026' in screen.drawn, truncated)
+            check(f'draw endpoint {ow}', end, min(expected_width + 3, 8))
+            check(f'actual tab index unchanged {ow}', _active[ow], 1)
+        finally:
+            for cache in (_active, _tab_tokens, _pad_budgets, _ideal_widths, _tab_count, _tab_bg_cache):
+                cache.pop(ow, None)
+    CONFIG = Config()
 
     # -- Gradient math ------------------------------------------------------
     print('gradient math...')

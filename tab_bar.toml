@@ -15,6 +15,31 @@ contrast_bias=3.14159
 # <1 prefers lightening fg (white pole). 1.0=natural crossover (~bg 118).
 pole_bias=3.8
 
+# Optional top-level regex transforms (one [[transform]] table per rule).
+# s: required Python regex; r: replacement (default '' deletes matches).
+# f: flags (default ''), combining a/i/m/s/u/x with Python re.A/I/M/S/U/X.
+# l (re.L) is rejected: it requires bytes, while titles are Unicode strings.
+# Count defaults to 1; 1-9 select a count, g/0 replace all. Last count wins:
+# g2 = two, 23 = three, 2g = all. Empty r/f are equivalent to omitted r/f.
+# c: n/nu/t/exe selects a component; '*' or omitted c = whole string.
+# Components are transformed after conversion/format specs (n:03d sees 007).
+# Each placeholder occurrence is independent; n changes do not affect nu.
+# Component rules run first, then whole-string rules, in declaration order
+# within each stage. Whole-string rules see ANSI escapes and %P/%% markers.
+# All transforms precede contrast adjustment, padding, and truncation.
+# Invalid rules are skipped with an indexed diagnostic at config load.
+# Single-quoted TOML strings preserve regex/replacement backslashes.
+#
+# [[transform]]
+# s='^/Users/[^/]+/'
+# r='~/'
+# c='t'
+#
+# [[transform]]
+# s=' \| '
+# r=' / '
+# f='g'
+
 [tab]
 # 'format' uses Python's str.format() mini-language.
 #

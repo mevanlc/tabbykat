@@ -62,6 +62,48 @@ re-read on kitty config reload.
 
 Example: `format="{fmt.fg._444444}{nu}{fmt.fg.tab} {t}%P"`
 
+### `[[transform]]` - regex replacements
+
+Add one top-level table per rule:
+
+```toml
+[[transform]]
+s='^/Users/[^/]+/'
+r='~/'
+c='t'
+
+[[transform]]
+s=' \| '
+r=' / '
+f='g'
+```
+
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `s` | Python regex to search for | Required |
+| `r` | Replacement, including Python backreferences such as `\1` or `\g<name>` | `''` (delete matches) |
+| `f` | Regex flags and replacement count | `''` (replace first match) |
+| `c` | Component: `n`, `nu`, `t`, `exe`, or `*` for the whole string | `'*'` |
+
+Flags `a`, `i`, `m`, `s`, `u`, and `x` map to Python's `re.A`, `re.I`,
+`re.M`, `re.S`, `re.U`, and `re.X`. Unicode matching is already the default.
+`l` (`re.L`) is rejected because it requires bytes patterns.
+Digits `1` through `9` set the maximum replacement count; `g` and `0` replace
+all matches. The last count flag wins: `g2` means two, `23` means three,
+and `2g` means all. With no count flag, only the first match is replaced.
+
+Component rules run after each placeholder's conversion and format spec:
+`c='n'` sees `007` for `{n:03d}` at tab 7. Repeated placeholders are transformed
+independently, and changing `n` does not change `nu` or the actual tab index.
+Title normalization happens before transforms.
+
+All component rules run first, then whole-string rules, preserving declaration
+order within each stage. Whole-string rules see the expanded string, including
+ANSI styling sequences and `%P`/`%%` markers, before contrast adjustment,
+padding calculation, and truncation. They can therefore change those controls.
+Invalid rules are skipped with an indexed diagnostic on config load; other
+rules and settings still apply.
+
 ### `[pad]` — tab width
 
 | Key            | Purpose                                              |
@@ -89,7 +131,7 @@ Only apply where the format hasn't set an explicit color (e.g. `{fmt.fg.tab}`).
 | `level` | `"off"`, `"error"`, `"warn"`, `"info"`, `"debug"`    |
 
 See `tab_bar.toml` for inline documentation and defaults, and
-`aidocs/TABBYKAT.md` for architecture and internals.
+`devdocs/TABBYKAT.md` for architecture and internals.
 
 ## License
 

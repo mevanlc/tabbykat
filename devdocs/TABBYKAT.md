@@ -66,6 +66,14 @@ The format string is expanded via `str.format()` which calls `ColorFormatter.__g
 
 `ColorFormatter.draw_data` and `ColorFormatter.tab_data` are **class attributes** shared across the `Formatter.fg` and `Formatter.bg` instances. You must bind them before every `str.format()` call. They're not instance attributes — `Formatter.fg` and `Formatter.bg` are class-level `ColorFormatter` objects on `Formatter`.
 
+### Transform pipeline
+
+- Top-level `[[transform]]` tables compile into an immutable `Config.transforms` tuple during config loading. Rules require a string `s`; omitted `r`/`f` mean empty strings, and omitted `c` means `*`.
+- Flags `aimsux` use Python's regex flags. `l` is invalid for Unicode strings. Count defaults to 1; `g`/`0` mean all, `1`-`9` select that count, and the last count character wins. Invalid patterns, replacements, flags, components, or value types skip only that rule and produce one indexed `log_error()` diagnostic per config load, independent of file logging.
+- `_TitleFormatter` uses `string.Formatter` hooks to retain the component name across conversions, format the original value, and then apply that component's rules. Numeric specs such as `{n:03d}` still work; each occurrence is transformed separately. `n` and `nu` are independent and never change the actual tab index. With no transforms, the original `str.format()` path remains in use.
+- `_prepare_title()` normalizes the title and resolves the executable lazily, applies component rules during expansion, then applies `*` rules to the assembled string. Declaration order is preserved within each stage, regardless of interleaving in the TOML. Whole-string rules see raw ANSI sequences and `%P`/`%%` markers, not just visible text.
+- Both stages precede `_contrast_adjust_sgr()` and `_tokenize()`, so layout measures transformed widths and drawing truncates the transformed output. Format errors fall back to the normalized title with its `t` rules, then still apply `*` rules.
+
 ### Auto-contrast: the gray zone is physics, not a bug
 
 Mid-gray backgrounds (~RGB 117) have a maximum achievable WCAG contrast ratio of ~4.6:1 against any foreground color. This is a mathematical ceiling — no algorithm can exceed it. The `_max_contrast()` function detects this and returns the best pole directly.
@@ -91,9 +99,11 @@ Binary searching for a target *luminance* then rounding to 8-bit RGB can land ju
 
 ## Testing
 
-`python3 tab_bar.py --test` runs the self-contained test suite (90+ tests) using shimmed kitty types. Tests cover:
+`uv run --no-project -- python tab_bar.py --test` runs the self-contained test suite using shimmed kitty types. Tests cover:
 - Tokenizer (text, SGR, %P, %%)
 - Config parsing (all sections, validation, fallbacks)
+- Transforms (defaults, counts, flags, backreferences, invalid-rule diagnostics, component/whole-string ordering, format specs/conversions, normalization, lazy executable lookup, styling/padding markers, and format fallback)
+- Transform layout/draw integration (transformed widths before truncation, with shorter and longer replacements)
 - Gradient math (ramp_min, ramp_max, pow curves)
 - Color lerp
 - WCAG luminance and contrast ratio
